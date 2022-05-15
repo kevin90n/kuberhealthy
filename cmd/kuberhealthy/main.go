@@ -29,7 +29,6 @@ var cfg *Config
 var configPath = "/etc/config/kuberhealthy.yaml"
 
 var podNamespace = os.Getenv("POD_NAMESPACE")
-var isMaster bool                  // indicates this instance is the master and should be running checks
 var upcomingMasterState bool       // the upcoming master state on next interval
 var lastMasterChangeTime time.Time // indicates the last time a master change was seen
 var listenNamespace string         // namespace to listen (watch/get) `khcheck` resources on.  If blank, all namespaces will be monitored.
@@ -97,7 +96,7 @@ func setUpConfig() error {
 	externalCheckURL, err := getEnvVar(KHExternalReportingURL)
 	if err != nil {
 		if len(podNamespace) == 0 {
-			return errors.New("KH_EXTERNAL_REPORTING_URL environment variable not set and POD_NAMESPACE environment variable was blank.  Could not determine Kuberhealthy callback URL.")
+			return errors.New("KH_EXTERNAL_REPORTING_URL environment variable not set and POD_NAMESPACE environment variable was blank.  Could not determine Kuberhealthy callback URL")
 		}
 		log.Infoln("KH_EXTERNAL_REPORTING_URL environment variable not set, using default value")
 		externalCheckURL = "http://kuberhealthy." + podNamespace + ".svc.cluster.local/externalCheckStatus"
@@ -142,7 +141,7 @@ func setUp() error {
 	}
 
 	// Handle force master mode
-	if cfg.EnableForceMaster == true {
+	if cfg.EnableForceMaster {
 		log.Infoln("Enabling forced master mode")
 		masterCalculation.DebugAlwaysMasterOn()
 	}
@@ -196,7 +195,7 @@ func listenForInterrupts(k *Kuberhealthy) {
 	sigChan := make(chan os.Signal, 1)
 
 	// register for shutdown events on sigChan
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM, syscall.SIGKILL)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 	log.Infoln("shutdown: waiting for sigChan notification...")
 	<-sigChan
 	log.Infoln("shutdown: Shutting down due to sigChan signal...")

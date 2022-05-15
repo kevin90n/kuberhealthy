@@ -46,7 +46,7 @@ func TestConfigReloadNotificatons(t *testing.T) {
 	for {
 		if foundNotifications == expectedNotifications {
 			if time.Now().Before(quickestPossibleFinishTime) {
-				t.Fatal("Tests ran too quickly! Duration was:", time.Now().Sub(startTime))
+				t.Fatal("Tests ran too quickly! Duration was:", time.Since(startTime))
 			}
 			break
 		}

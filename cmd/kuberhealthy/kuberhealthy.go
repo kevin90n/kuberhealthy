@@ -27,11 +27,13 @@ import (
 	khcheckv1 "github.com/kuberhealthy/kuberhealthy/v2/pkg/apis/khcheck/v1"
 	khjobv1 "github.com/kuberhealthy/kuberhealthy/v2/pkg/apis/khjob/v1"
 	khstatev1 "github.com/kuberhealthy/kuberhealthy/v2/pkg/apis/khstate/v1"
+	"github.com/kuberhealthy/kuberhealthy/v2/pkg/apis/khstate/v1/reflector"
 	"github.com/kuberhealthy/kuberhealthy/v2/pkg/checks/external"
 	"github.com/kuberhealthy/kuberhealthy/v2/pkg/checks/external/status"
 	"github.com/kuberhealthy/kuberhealthy/v2/pkg/health"
 	"github.com/kuberhealthy/kuberhealthy/v2/pkg/masterCalculation"
 	"github.com/kuberhealthy/kuberhealthy/v2/pkg/metrics"
+	"github.com/kuberhealthy/kuberhealthy/v2/pkg/workload"
 )
 
 // Kuberhealthy represents the kuberhealthy server and its checks
@@ -40,24 +42,25 @@ type Kuberhealthy struct {
 	ListenAddr         string // the listen address, such as ":80"
 	MetricForwarder    metrics.Client
 	overrideKubeClient *kubernetes.Clientset
-	cancelChecksFunc   context.CancelFunc // invalidates the context of all running checks
-	cancelReaperFunc   context.CancelFunc // invalidates the context of the reaper
-	wg                 sync.WaitGroup     // used to track running checks
-	shutdownCtxFunc    context.CancelFunc // used to shutdown the main control select
-	stateReflector     *StateReflector    // a reflector that can cache the current state of the khState resources
+	cancelChecksFunc   context.CancelFunc        // invalidates the context of all running checks
+	cancelReaperFunc   context.CancelFunc        // invalidates the context of the reaper
+	wg                 sync.WaitGroup            // used to track running checks
+	shutdownCtxFunc    context.CancelFunc        // used to shutdown the main control select
+	stateReflector     *reflector.StateReflector // a reflector that can cache the current state of the khState resources
+	isMaster           bool                      // indicates this instance is functioning as the master instance currently
 }
 
 // NewKuberhealthy creates a new kuberhealthy checker instance
 func NewKuberhealthy() *Kuberhealthy {
 	kh := &Kuberhealthy{}
-	kh.stateReflector = NewStateReflector()
+	kh.stateReflector = reflector.NewStateReflector(khStateClient, stateCRDResource, "") // blank for all namespaces
 	return kh
 }
 
 // setCheckExecutionError sets an execution error for a check name in
 // its crd status
 func (k *Kuberhealthy) setCheckExecutionError(checkName string, checkNamespace string, exErr error) error {
-	details := khstatev1.NewWorkloadDetails(khstatev1.KHCheck)
+	details := khstatev1.NewWorkloadDetails(workload.KHCheck)
 	check, err := k.getCheck(checkName, checkNamespace)
 	if err != nil {
 		return err
@@ -71,12 +74,12 @@ func (k *Kuberhealthy) setCheckExecutionError(checkName string, checkNamespace s
 	// we need to maintain the current UUID, which means fetching it first
 	khc, err := k.getCheck(checkName, checkNamespace)
 	if err != nil {
-		return fmt.Errorf("Error when setting execution error on check %s %s %w", checkName, checkNamespace, err)
+		return fmt.Errorf("error when setting execution error on check %s %s %w", checkName, checkNamespace, err)
 	}
 
 	checkState, err := getCheckState(khc)
 	if err != nil {
-		return fmt.Errorf("Error when setting execution error on check (getting check state for current UUID) %s %s %w", checkName, checkNamespace, err)
+		return fmt.Errorf("error when setting execution error on check (getting check state for current UUID) %s %s %w", checkName, checkNamespace, err)
 	}
 	details.CurrentUUID = checkState.CurrentUUID
 	log.Debugln("Setting execution state of check", checkName, "to", details.OK, details.Errors, details.CurrentUUID, details.GetKHWorkload())
@@ -84,14 +87,14 @@ func (k *Kuberhealthy) setCheckExecutionError(checkName string, checkNamespace s
 	// store the check state with the CRD
 	err = k.storeCheckState(checkName, checkNamespace, details)
 	if err != nil {
-		return fmt.Errorf("Was unable to write an execution error to the CRD status with error: %w", err)
+		return fmt.Errorf("was unable to write an execution error to the CRD status with error: %w", err)
 	}
 	return nil
 }
 
 // setJobExecutionError sets an execution error for a job name in its crd status
 func (k *Kuberhealthy) setJobExecutionError(jobName string, jobNamespace string, exErr error) error {
-	details := khstatev1.NewWorkloadDetails(khstatev1.KHJob)
+	details := khstatev1.NewWorkloadDetails(workload.KHJob)
 	job, err := k.getJob(jobName, jobNamespace)
 	if err != nil {
 		return err
@@ -105,11 +108,11 @@ func (k *Kuberhealthy) setJobExecutionError(jobName string, jobNamespace string,
 	// we need to maintain the current UUID, which means fetching it first
 	khj, err := k.getJob(jobName, jobNamespace)
 	if err != nil {
-		return fmt.Errorf("Error when setting execution error on job %s %s %w", jobName, jobNamespace, err)
+		return fmt.Errorf("error when setting execution error on job %s %s %w", jobName, jobNamespace, err)
 	}
 	jobState, err := getJobState(khj)
 	if err != nil {
-		return fmt.Errorf("Error when setting execution error on job (getting job state for current UUID) %s %s %w", jobName, jobNamespace, err)
+		return fmt.Errorf("error when setting execution error on job (getting job state for current UUID) %s %s %w", jobName, jobNamespace, err)
 	}
 	details.CurrentUUID = jobState.CurrentUUID
 
@@ -118,7 +121,7 @@ func (k *Kuberhealthy) setJobExecutionError(jobName string, jobNamespace string,
 	// store the check state with the CRD
 	err = k.storeCheckState(jobName, jobNamespace, details)
 	if err != nil {
-		return fmt.Errorf("Was unable to write an execution error to the CRD status with error: %w", err)
+		return fmt.Errorf("was unable to write an execution error to the CRD status with error: %w", err)
 	}
 	return nil
 }
@@ -135,7 +138,7 @@ func (k *Kuberhealthy) Shutdown(doneChan chan struct{}) {
 		log.Infoln("shutdown: aborting control context")
 		k.shutdownCtxFunc() // stop the control system
 	}
-	time.Sleep(5) // help prevent more checks from starting in a race before control system stop happens
+	time.Sleep(time.Second * 5) // help prevent more checks from starting in a race before control system stop happens
 	log.Infoln("shutdown: stopping checks")
 	k.StopChecks() // stop all checks
 	log.Infoln("shutdown: ready for main program shutdown")
@@ -178,7 +181,7 @@ func (k *Kuberhealthy) Start(ctx context.Context) {
 	go k.stateReflector.Start()
 
 	// if influxdb is enabled, configure it
-	if cfg.EnableInflux == true {
+	if cfg.EnableInflux {
 		k.configureInfluxForwarding()
 	}
 
@@ -228,7 +231,7 @@ func (k *Kuberhealthy) Start(ctx context.Context) {
 			log.Infoln("control: Witnessed a khcheck resource change...")
 
 			// if we are master, stop, reconfigure our khchecks, and start again with the new configuration
-			if isMaster {
+			if k.isMaster {
 				log.Infoln("control: Reloading external check configurations due to khcheck update")
 				k.RestartChecks(ctx)
 				k.RestartReaper(ctx)
@@ -237,7 +240,7 @@ func (k *Kuberhealthy) Start(ctx context.Context) {
 			log.Infoln("control: Witnessed a kuberhealthy configuration change...")
 
 			// if we are master, stop, reconfigure our khchecks, and start again with the new configuration
-			if isMaster {
+			if k.isMaster {
 				log.Infoln("control: Reloading external check configurations due to kuberhealthy configuration update")
 				k.RestartChecks(ctx)
 				k.RestartReaper(ctx)
@@ -500,10 +503,7 @@ func verifyNewKHJob(khJobName string, khJobNamespace string) bool {
 	}
 	log.Debugln("Found khjob:", kj.Name, "in job phase:", kj.Spec.Phase)
 
-	if kj.Spec.Phase == "" {
-		return true
-	}
-	return false
+	return kj.Spec.Phase == ""
 }
 
 // monitorExternalChecks watches for changes to the external check CRDs
@@ -733,9 +733,9 @@ func (k *Kuberhealthy) configureJob(job khjobv1.KuberhealthyJob) *external.Check
 // triggerKHJob checks if its master, sets the context, and runs the khjob in a goroutine
 func (k *Kuberhealthy) triggerKHJob(ctx context.Context, job khjobv1.KuberhealthyJob) {
 
-	log.Debugln("khjob trigger, isMaster:", isMaster)
+	log.Debugln("khjob trigger, isMaster:", k.isMaster)
 	// only the master pod should be running khjobs or khjobs are duplicated
-	if isMaster {
+	if k.isMaster {
 		go k.runJob(ctx, job)
 	}
 }
@@ -848,7 +848,7 @@ func (k *Kuberhealthy) masterMonitor(ctx context.Context, becameMasterChan chan 
 	// event, then we calculate if we should become or lose master.
 	for range ticker.C {
 
-		if time.Now().Sub(lastMasterChangeTime) < interval {
+		if time.Since(lastMasterChangeTime) < interval {
 			log.Println("control: waiting for master changes to settle...")
 			continue
 		}
@@ -857,17 +857,17 @@ func (k *Kuberhealthy) masterMonitor(ctx context.Context, becameMasterChan chan 
 		goingToBeMaster := upcomingMasterState
 
 		// stop checks if we are no longer the master
-		if goingToBeMaster && !isMaster {
+		if goingToBeMaster && !k.isMaster {
 			becameMasterChan <- struct{}{}
 		}
 
 		// start checks if we are now master
-		if !goingToBeMaster && isMaster {
+		if !goingToBeMaster && k.isMaster {
 			lostMasterChan <- struct{}{}
 		}
 
 		// refresh global isMaster state
-		isMaster = goingToBeMaster
+		k.isMaster = goingToBeMaster
 	}
 }
 
@@ -918,14 +918,14 @@ func (k *Kuberhealthy) runJob(ctx context.Context, job khjobv1.KuberhealthyJob) 
 	// Subtract 10 seconds from run time since there are two 5 second sleeps during the job run where kuberhealthy
 	// waits for all pods to clear before running the check and waits for all pods to exit once the check has finished
 	// running. Both occur before and after the kh job pod completes its run.
-	jobRunDuration := time.Now().Sub(jobStartTime) - time.Second*10
+	jobRunDuration := time.Since(jobStartTime) - time.Second*10
 
 	// make a new state for this job and fill it from the job's current status
 	jobDetails, err := getJobState(j)
 	if err != nil {
 		log.Errorln("Error setting check state after run:", j.Name(), "in namespace", j.CheckNamespace()+":", err)
 	}
-	details := khstatev1.NewWorkloadDetails(khstatev1.KHJob)
+	details := khstatev1.NewWorkloadDetails(workload.KHJob)
 	details.Namespace = j.CheckNamespace()
 	details.OK, details.Errors = j.CurrentStatus()
 	details.RunDuration = jobRunDuration.String()
@@ -1031,14 +1031,14 @@ func (k *Kuberhealthy) runCheck(ctx context.Context, c *external.Checker) {
 		// Subtract 10 seconds from run time since there are two 5 second sleeps during the check run where kuberhealthy
 		// waits for all pods to clear before running the check and waits for all pods to exit once the check has finished
 		// running. Both occur before and after the checker pod completes its run.
-		checkRunDuration := time.Now().Sub(checkStartTime) - time.Second*10
+		checkRunDuration := time.Since(checkStartTime) - time.Second*10
 
 		// make a new state for this check and fill it from the check's current status
 		checkDetails, err := getCheckState(c)
 		if err != nil {
 			log.Errorln("Error setting check state after run:", c.Name(), "in namespace", c.CheckNamespace()+":", err)
 		}
-		details := khstatev1.NewWorkloadDetails(khstatev1.KHCheck)
+		details := khstatev1.NewWorkloadDetails(workload.KHCheck)
 		details.Namespace = c.CheckNamespace()
 		details.OK, details.Errors = c.CurrentStatus()
 		details.RunDuration = checkRunDuration.String()
@@ -1154,6 +1154,14 @@ func (k *Kuberhealthy) StartWebServer() {
 		err := k.externalCheckReportHandler(w, r)
 		if err != nil {
 			log.Errorln("externalCheckStatus endpoint error:", err)
+		}
+	})
+
+	// Accept job status reports coming from job pods
+	http.HandleFunc("/externalJobStatus", func(w http.ResponseWriter, r *http.Request) {
+		err := k.externalJobReportHandler(w, r)
+		if err != nil {
+			log.Errorln("externalJobStatus endpoint error:", err)
 		}
 	})
 
@@ -1368,6 +1376,12 @@ func (k *Kuberhealthy) validatePodReportBySourceIP(ctx context.Context, r *http.
 	return podReport, nil
 }
 
+// externalJobReportHandler handles reports from khjob pods
+func (k *Kuberhealthy) externalJobReportHandler(w http.ResponseWriter, r *http.Request) error {
+	// TODO
+	return k.externalCheckReportHandler(w, r)
+}
+
 // externalCheckReportHandler handles requests coming from external checkers reporting their status.
 // This endpoint checks that the external check report is coming from the correct UUID or pod IP before recording
 // the reported status of the corresponding external check.  This endpoint expects a JSON payload of
@@ -1375,17 +1389,22 @@ func (k *Kuberhealthy) validatePodReportBySourceIP(ctx context.Context, r *http.
 // causes a check of the calling pod's spec via the API to ensure that the calling pod is expected
 // to be reporting its status.
 func (k *Kuberhealthy) externalCheckReportHandler(w http.ResponseWriter, r *http.Request) error {
+	// return k.handleIncomingWorkloadReport(w,r,khstate.workloadType(khstate.))
+
+	// TODO
+	return nil
+}
+
+func (k *Kuberhealthy) handleIncomingWorkloadReport(w http.ResponseWriter, r *http.Request, workloadType workload.KHWorkload) error {
 	// make a request ID for tracking this request
 	requestID := "web: " + uuid.New().String()
-
-	ctx := r.Context()
 
 	k.externalCheckReportHandlerLog(requestID, "Client connected to check report handler from", r.UserAgent())
 
 	// Validate request using the kh-run-uuid header. If the header doesn't exist, or there's an error with validation,
 	// validate using the pod's remote IP.
 	k.externalCheckReportHandlerLog(requestID, "validating external check status report from its reporting kuberhealthy run uuid:", r.Header.Get("kh-run-uuid"))
-	podReport, reportValidated, err := k.validateUsingRequestHeader(ctx, r)
+	podReport, reportValidated, err := k.validateUsingRequestHeader(r.Context(), r)
 	if err != nil {
 		k.externalCheckReportHandlerLog(requestID, "Failed to look up pod by its kh-run-uuid header:", r.Header.Get("kh-run-uuid"), err)
 	}
@@ -1393,7 +1412,7 @@ func (k *Kuberhealthy) externalCheckReportHandler(w http.ResponseWriter, r *http
 	// If the check uuid header is missing, attempt to validate using calling pod's source IP
 	if !reportValidated {
 		k.externalCheckReportHandlerLog(requestID, "validating external check status report from the pod's remote IP:", r.RemoteAddr)
-		podReport, err = k.validatePodReportBySourceIP(ctx, r)
+		podReport, err = k.validatePodReportBySourceIP(r.Context(), r)
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			k.externalCheckReportHandlerLog(requestID, "Failed to look up pod by its IP:", r.RemoteAddr, err)
@@ -1439,21 +1458,21 @@ func (k *Kuberhealthy) externalCheckReportHandler(w http.ResponseWriter, r *http
 			}
 		}
 	}
+	var checkRunDuration string
 
-	checkRunDuration := time.Duration(0).String()
-	khWorkload := determineKHWorkload(podReport.Name, podReport.Namespace)
-
-	switch khWorkload {
-	case khstatev1.KHCheck:
+	switch workloadType {
+	case workload.KHCheck:
 		checkDetails := k.stateReflector.CurrentStatus().CheckDetails
 		checkRunDuration = checkDetails[podReport.Namespace+"/"+podReport.Name].RunDuration
-	case khstatev1.KHJob:
+	case workload.KHJob:
 		jobDetails := k.stateReflector.CurrentStatus().JobDetails
 		checkRunDuration = jobDetails[podReport.Namespace+"/"+podReport.Name].RunDuration
+	default:
+		checkRunDuration = time.Duration(0).String()
 	}
 
 	// create a details object from our incoming status report before storing it as a khstate custom resource
-	details := khstatev1.NewWorkloadDetails(khWorkload)
+	details := khstatev1.NewWorkloadDetails(workloadType)
 	details.Errors = state.Errors
 	details.OK = state.OK
 	details.RunDuration = checkRunDuration
@@ -1552,18 +1571,21 @@ func (k *Kuberhealthy) getCurrentState(namespaces []string) health.State {
 		log.Errorln("Failed to calculate master:", err)
 	}
 
+	var currentState health.State
+	currentState.CurrentMaster = currentMaster
+
+	// if namespaces were provided, we fetch only those namespaces
 	if len(namespaces) != 0 {
-		currentState := k.getCurrentStatusForNamespaces(namespaces)
-		currentState.CurrentMaster = currentMaster
+		currentState = k.getCurrentStatusForNamespaces(namespaces)
 		return currentState
 	}
 
-	currentState := k.stateReflector.CurrentStatus()
-	currentState.CurrentMaster = currentMaster
+	// by default, we fetch every namespace and return it
+	currentState = k.stateReflector.CurrentStatus()
 	return currentState
 }
 
-// getCurrentState fetches the current state of all checks from the requested namespaces
+// getCurrentStatusForNamespaces fetches the current state of all checks from the requested namespaces
 // their CRD objects and returns the summary as a health.State.
 // Failures to fetch CRD state return an error.
 func (k *Kuberhealthy) getCurrentStatusForNamespaces(namespaces []string) health.State {
@@ -1575,16 +1597,16 @@ func (k *Kuberhealthy) getCurrentStatusForNamespaces(namespaces []string) health
 	statesForNamespaces.CheckDetails = make(map[string]khstatev1.WorkloadDetails)
 	statesForNamespaces.JobDetails = make(map[string]khstatev1.WorkloadDetails)
 	if len(namespaces) != 0 {
-		statesForNamespaces = validateCurrentStatusForNamespaces(states.CheckDetails, namespaces, statesForNamespaces, khstatev1.KHCheck)
-		statesForNamespaces = validateCurrentStatusForNamespaces(states.JobDetails, namespaces, statesForNamespaces, khstatev1.KHJob)
+		statesForNamespaces = validateCurrentStatusForNamespaces(states.CheckDetails, namespaces, statesForNamespaces, workload.KHCheck)
+		statesForNamespaces = validateCurrentStatusForNamespaces(states.JobDetails, namespaces, statesForNamespaces, workload.KHJob)
 	}
 
 	log.Infoln("khState reflector returning current status on", len(statesForNamespaces.CheckDetails), "check khStates and", len(statesForNamespaces.JobDetails), "job khStates")
 	return statesForNamespaces
 }
 
-// validateCurrentStatusForNamespaces ranges through all CheckDetails or JobDetails to store in a new health state for namespaces
-func validateCurrentStatusForNamespaces(details map[string]khstatev1.WorkloadDetails, namespaces []string, statesForNamespaces health.State, workload khstatev1.KHWorkload) health.State {
+// validateCurrentStatusForNamespaces ranges through all CheckDetails or JobDetails to store a new health state for namespaces
+func validateCurrentStatusForNamespaces(details map[string]khstatev1.WorkloadDetails, namespaces []string, statesForNamespaces health.State, workloadType workload.KHWorkload) health.State {
 
 	for checkName, checkState := range details {
 		// check if the namespace matches anything requested
@@ -1594,7 +1616,7 @@ func validateCurrentStatusForNamespaces(details map[string]khstatev1.WorkloadDet
 		}
 
 		// skip the check if it has never been run before.  This prevents checks that have not yet
-		// run from showing in the status page.
+		// run from showing in the status page as `ok=false`, which could cause false alerts.
 		if len(checkState.AuthoritativePod) == 0 {
 			log.Debugln("Output for", checkName, checkState.Namespace, "hidden from status page due to blank authoritative pod")
 			continue
@@ -1612,10 +1634,10 @@ func validateCurrentStatusForNamespaces(details map[string]khstatev1.WorkloadDet
 		}
 
 		// update details struct
-		switch workload {
-		case khstatev1.KHCheck:
+		switch workloadType {
+		case workload.KHCheck:
 			statesForNamespaces.CheckDetails[checkName] = checkState
-		case khstatev1.KHJob:
+		case workload.KHJob:
 			statesForNamespaces.JobDetails[checkName] = checkState
 		}
 	}

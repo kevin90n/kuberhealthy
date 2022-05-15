@@ -186,7 +186,7 @@ func (k *KubernetesAPI) deleteFilteredCheckerPods(ctx context.Context, client *k
 			continue
 		}
 		// Delete pods older than maxCheckPodAge and is in status Succeeded
-		if v.Status.Phase == v1.PodSucceeded && time.Now().Sub(podTerminatedTime) > cfg.MaxCheckPodAge {
+		if v.Status.Phase == v1.PodSucceeded && time.Since(podTerminatedTime) > cfg.MaxCheckPodAge {
 			log.Infoln("checkReaper: Found completed pod older than:", cfg.MaxCheckPodAge, "in status `Succeeded`. Deleting pod:", n)
 
 			err = k.deletePod(ctx, v)
@@ -198,7 +198,7 @@ func (k *KubernetesAPI) deleteFilteredCheckerPods(ctx context.Context, client *k
 		}
 
 		// Delete failed pods (status Failed) older than maxCheckPodAge
-		if v.Status.Phase == v1.PodFailed && time.Now().Sub(podTerminatedTime) > cfg.MaxCheckPodAge {
+		if v.Status.Phase == v1.PodFailed && time.Since(podTerminatedTime) > cfg.MaxCheckPodAge {
 			log.Infoln("checkReaper: Found completed pod older than:", cfg.MaxCheckPodAge, "in status `Failed`. Deleting pod:", n)
 
 			err = k.deletePod(ctx, v)
@@ -275,7 +275,7 @@ func getAllCompletedPodsWithCheckName(reapCheckerPods map[string]v1.Pod, pod v1.
 				log.Warnln(err)
 				continue
 			}
-			if time.Now().Sub(podTerminatedTime) > minCheckPodAge {
+			if time.Since(podTerminatedTime) > minCheckPodAge {
 				allCheckPods = append(allCheckPods, v)
 			}
 		}
@@ -295,7 +295,7 @@ func (k *KubernetesAPI) deletePod(ctx context.Context, pod v1.Pod) error {
 
 // jobConditions returns true if conditions are met to be deleted for khjob
 func jobConditions(job khjobv1.KuberhealthyJob, duration time.Duration, phase khjobv1.JobPhase) bool {
-	if time.Now().Sub(job.CreationTimestamp.Time) > duration && job.Spec.Phase == phase {
+	if time.Since(job.CreationTimestamp.Time) > duration && job.Spec.Phase == phase {
 		log.Infoln("checkReaper: Found khjob older than", duration, "minutes in status", phase)
 		return true
 	}

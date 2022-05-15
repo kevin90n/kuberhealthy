@@ -29,6 +29,7 @@ import (
 	khjobv1 "github.com/kuberhealthy/kuberhealthy/v2/pkg/apis/khjob/v1"
 	khstatev1 "github.com/kuberhealthy/kuberhealthy/v2/pkg/apis/khstate/v1"
 	"github.com/kuberhealthy/kuberhealthy/v2/pkg/checks/external/util"
+	"github.com/kuberhealthy/kuberhealthy/v2/pkg/workload"
 )
 
 // KHReportingURL is the environment variable used to tell external checks where to send their status updates
@@ -107,7 +108,7 @@ type Checker struct {
 	wg                       sync.WaitGroup     // used to track background workers and processes
 	hostname                 string             // hostname cache
 	checkPodName             string             // the current unique checker pod name
-	KHWorkload               khstatev1.KHWorkload
+	KHWorkload               workload.KHWorkload
 }
 
 func init() {
@@ -143,7 +144,7 @@ func NewCheck(client *kubernetes.Clientset, checkConfig *khcheckv1.KuberhealthyC
 		OriginalPodSpec:          checkConfig.Spec.PodSpec,
 		PodSpec:                  checkConfig.Spec.PodSpec,
 		KubeClient:               client,
-		KHWorkload:               khstatev1.KHCheck,
+		KHWorkload:               workload.KHCheck,
 	}
 }
 
@@ -166,7 +167,7 @@ func NewJob(client *kubernetes.Clientset, jobConfig *khjobv1.KuberhealthyJob, kh
 		OriginalPodSpec:          jobConfig.Spec.PodSpec,
 		PodSpec:                  jobConfig.Spec.PodSpec,
 		KubeClient:               client,
-		KHWorkload:               khstatev1.KHJob,
+		KHWorkload:               workload.KHJob,
 	}
 }
 

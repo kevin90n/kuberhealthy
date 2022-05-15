@@ -44,6 +44,9 @@ func Client(kubeConfigFile string) (*KHStateV1Client, error) {
 	c, err := rest.InClusterConfig()
 	if err != nil {
 		c, err = clientcmd.BuildConfigFromFlags("", kubeConfigFile)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	client, err := NewForConfig(c)

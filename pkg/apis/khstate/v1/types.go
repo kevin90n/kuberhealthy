@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"github.com/kuberhealthy/kuberhealthy/v2/pkg/workload"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -40,19 +41,8 @@ type WorkloadDetails struct {
 	AuthoritativePod string       `json:"AuthoritativePod" yaml:"AuthoritativePod"`   // the main kuberhealthy pod creating and updating the khstate
 	CurrentUUID      string       `json:"uuid" yaml:"uuid"`                           // the UUID that is authorized to report statuses into the kuberhealthy endpoint
 	// +nullable
-	khWorkload *KHWorkload `json:"khWorkload,omitempty" yaml:"khWorkload,omitempty"`
+	KHWorkload workload.KHWorkload `json:"khWorkload,omitempty" yaml:"khWorkload,omitempty"`
 }
-
-// KHWorkload is used to describe the different types of kuberhealthy workloads: KhCheck or KHJob
-type KHWorkload string
-
-// Two types of KHWorkloads are available: Kuberhealthy Check or Kuberhealthy Job
-// KHChecks run on a scheduled run interval
-// KHJobs run once
-const (
-	KHCheck KHWorkload = "KHCheck"
-	KHJob   KHWorkload = "KHJob"
-)
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 

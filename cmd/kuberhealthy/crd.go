@@ -12,6 +12,7 @@ import (
 	khjobv1 "github.com/kuberhealthy/kuberhealthy/v2/pkg/apis/khjob/v1"
 	khstatev1 "github.com/kuberhealthy/kuberhealthy/v2/pkg/apis/khstate/v1"
 	"github.com/kuberhealthy/kuberhealthy/v2/pkg/checks/external"
+	"github.com/kuberhealthy/kuberhealthy/v2/pkg/workload"
 )
 
 // setCheckStateResource puts a check state's state into the specified CRD resource.  It sets the AuthoritativePod
@@ -55,7 +56,7 @@ func sanitizeResourceName(c string) string {
 }
 
 // ensureStateResourceExists checks for the existence of the specified resource and creates it if it does not exist
-func ensureStateResourceExists(checkName string, checkNamespace string, workload khstatev1.KHWorkload) error {
+func ensureStateResourceExists(checkName string, checkNamespace string, workload workload.KHWorkload) error {
 	name := sanitizeResourceName(checkName)
 
 	log.Debugln("Checking existence of custom resource:", name)
@@ -83,12 +84,12 @@ func ensureStateResourceExists(checkName string, checkNamespace string, workload
 // custom resource
 func getCheckState(c *external.Checker) (khstatev1.WorkloadDetails, error) {
 
-	var state = khstatev1.NewWorkloadDetails(khstatev1.KHCheck)
+	var state = khstatev1.NewWorkloadDetails(workload.KHCheck)
 	var err error
 	name := sanitizeResourceName(c.Name())
 
 	// make sure the CRD exists, even when checking status
-	err = ensureStateResourceExists(c.Name(), c.CheckNamespace(), khstatev1.KHCheck)
+	err = ensureStateResourceExists(c.Name(), c.CheckNamespace(), workload.KHCheck)
 	if err != nil {
 		return state, errors.New("Error validating CRD exists: " + name + " " + err.Error())
 	}
@@ -106,12 +107,12 @@ func getCheckState(c *external.Checker) (khstatev1.WorkloadDetails, error) {
 // custom resource
 func getJobState(j *external.Checker) (khstatev1.WorkloadDetails, error) {
 
-	var state = khstatev1.NewWorkloadDetails(khstatev1.KHJob)
+	var state = khstatev1.NewWorkloadDetails(workload.KHJob)
 	var err error
 	name := sanitizeResourceName(j.Name())
 
 	// make sure the CRD exists, even when checking status
-	err = ensureStateResourceExists(j.Name(), j.CheckNamespace(), khstatev1.KHJob)
+	err = ensureStateResourceExists(j.Name(), j.CheckNamespace(), workload.KHJob)
 	if err != nil {
 		return state, errors.New("Error validating CRD exists: " + name + " " + err.Error())
 	}
