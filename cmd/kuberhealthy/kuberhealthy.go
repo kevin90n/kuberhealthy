@@ -702,7 +702,7 @@ func (k *Kuberhealthy) configureJob(job khjobv1.KuberhealthyJob) *external.Check
 
 	// create a new kubernetes client for this external checker
 	log.Infoln("Enabling external job:", job.Name)
-	kj := external.NewJob(kubernetesClient, &job, khJobClient, khStateClient, cfg.ExternalCheckReportingURL)
+	kj := external.NewJob(kubernetesClient, &job, khJobClient, khStateClient, cfg.ExternalJobReportingURL)
 
 	var err error
 	// parse the user specified timeout if present
@@ -1376,25 +1376,25 @@ func (k *Kuberhealthy) validatePodReportBySourceIP(ctx context.Context, r *http.
 	return podReport, nil
 }
 
-// externalJobReportHandler handles reports from khjob pods
-func (k *Kuberhealthy) externalJobReportHandler(w http.ResponseWriter, r *http.Request) error {
-	// TODO
-	return k.externalCheckReportHandler(w, r)
-}
-
-// externalCheckReportHandler handles requests coming from external checkers reporting their status.
-// This endpoint checks that the external check report is coming from the correct UUID or pod IP before recording
-// the reported status of the corresponding external check.  This endpoint expects a JSON payload of
+// externalJobReportHandler handles reports from khjob pods.  This endpoint expects a JSON payload of
 // the `State` struct found in the github.com/kuberhealthy/kuberhealthy/v2/pkg/health package.  The request
 // causes a check of the calling pod's spec via the API to ensure that the calling pod is expected
 // to be reporting its status.
-func (k *Kuberhealthy) externalCheckReportHandler(w http.ResponseWriter, r *http.Request) error {
-	// return k.handleIncomingWorkloadReport(w,r,khstate.workloadType(khstate.))
-
-	// TODO
-	return nil
+func (k *Kuberhealthy) externalJobReportHandler(w http.ResponseWriter, r *http.Request) error {
+	return k.handleIncomingWorkloadReport(w, r, workload.KHJob)
 }
 
+// externalCheckReportHandler handles requests coming from external checkers reporting their status.
+// This endpoint expects a JSON payload of the `State` struct found in the
+// github.com/kuberhealthy/kuberhealthy/v2/pkg/health package.  The request causes a check of the
+// calling pod's spec via the API to ensure that the calling pod is expected to be reporting its status.
+func (k *Kuberhealthy) externalCheckReportHandler(w http.ResponseWriter, r *http.Request) error {
+	return k.handleIncomingWorkloadReport(w, r, workload.KHCheck)
+}
+
+// handleIncomingWorkloadReport handles reports for khJob and khCheck resoruces depending on their resource
+// typoe (job vs check). This logic checks that the external check report is coming from the correct UUID or pod IP before recording
+// the reported status of the corresponding external check.
 func (k *Kuberhealthy) handleIncomingWorkloadReport(w http.ResponseWriter, r *http.Request, workloadType workload.KHWorkload) error {
 	// make a request ID for tracking this request
 	requestID := "web: " + uuid.New().String()

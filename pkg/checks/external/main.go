@@ -49,9 +49,13 @@ const KHCheckNameAnnotationKey = "comcast.github.io/check-name"
 // checks in.
 const KHPodNamespace = "KH_POD_NAMESPACE"
 
-// DefaultKuberhealthyReportingURL is the default location that external checks
+// DefaultKuberhealthyCheckReportingURL is the default location that external checks
 // are expected to report into.
-const DefaultKuberhealthyReportingURL = "http://kuberhealthy.kuberhealthy.svc.cluster.local/externalCheckStatus"
+const DefaultKuberhealthyCheckReportingURL = "http://kuberhealthy.kuberhealthy.svc.cluster.local/externalCheckStatus"
+
+// DefaultKuberhealthyCheckReportingURL is the default location that external jobs
+// are expected to report into.
+const DefaultKuberhealthyJobReportingURL = "http://kuberhealthy.kuberhealthy.svc.cluster.local/externalCheckStatus"
 
 // kuberhealthyRunIDLabel is the pod label for the kuberhealthy run id value
 const kuberhealthyRunIDLabel = "kuberhealthy-run-id"
@@ -86,29 +90,30 @@ var kuberhealthyNamespace = "kuberhealthy"
 // Checker implements a KuberhealthyCheck for external
 // check execution and lifecycle management.
 type Checker struct {
-	CheckName                string // the name of this checker
-	Namespace                string
-	RunInterval              time.Duration // how often this check runs a loop
-	RunTimeout               time.Duration // time check must run completely within
-	KubeClient               *kubernetes.Clientset
-	KHJobClient              *khjobv1.KHJobV1Client
-	KHCheckClient            *khcheckv1.KHCheckV1Client
-	KHStateClient            *khstatev1.KHStateV1Client
-	PodSpec                  apiv1.PodSpec // the current pod spec we are using after enforcement of settings
-	OriginalPodSpec          apiv1.PodSpec // the user-provided spec of the pod
-	RunID                    string        // the uuid of the current run
-	KuberhealthyReportingURL string        // the URL that the check should want to report results back to
-	ExtraAnnotations         map[string]string
-	ExtraLabels              map[string]string
-	Node                     string             // the node the checker pod runs on
-	currentCheckUUID         string             // the UUID of the current external checker running
-	Debug                    bool               // indicates we should run in debug mode - run once and stop
-	shutdownCTXFunc          context.CancelFunc // used to cancel things in-flight when shutting down gracefully
-	shutdownCTX              context.Context    // a context used for shutting down the check gracefully
-	wg                       sync.WaitGroup     // used to track background workers and processes
-	hostname                 string             // hostname cache
-	checkPodName             string             // the current unique checker pod name
-	KHWorkload               workload.KHWorkload
+	CheckName                     string // the name of this checker
+	Namespace                     string
+	RunInterval                   time.Duration // how often this check runs a loop
+	RunTimeout                    time.Duration // time check must run completely within
+	KubeClient                    *kubernetes.Clientset
+	KHJobClient                   *khjobv1.KHJobV1Client
+	KHCheckClient                 *khcheckv1.KHCheckV1Client
+	KHStateClient                 *khstatev1.KHStateV1Client
+	PodSpec                       apiv1.PodSpec // the current pod spec we are using after enforcement of settings
+	OriginalPodSpec               apiv1.PodSpec // the user-provided spec of the pod
+	RunID                         string        // the uuid of the current run
+	KuberhealthyJobReportingURL   string        // the URL that the check should want to report results back to
+	KuberhealthyCheckReportingURL string        // the URL that the check should want to report results back to
+	ExtraAnnotations              map[string]string
+	ExtraLabels                   map[string]string
+	Node                          string             // the node the checker pod runs on
+	currentCheckUUID              string             // the UUID of the current external checker running
+	Debug                         bool               // indicates we should run in debug mode - run once and stop
+	shutdownCTXFunc               context.CancelFunc // used to cancel things in-flight when shutting down gracefully
+	shutdownCTX                   context.Context    // a context used for shutting down the check gracefully
+	wg                            sync.WaitGroup     // used to track background workers and processes
+	hostname                      string             // hostname cache
+	checkPodName                  string             // the current unique checker pod name
+	KHWorkload                    workload.KHWorkload
 }
 
 func init() {
@@ -133,18 +138,18 @@ func NewCheck(client *kubernetes.Clientset, checkConfig *khcheckv1.KuberhealthyC
 	// build the checker object
 	log.Debugf("Creating external check from check config: %+v \n", checkConfig)
 	return &Checker{
-		Namespace:                checkConfig.Namespace,
-		KHCheckClient:            khCheckClient,
-		KHStateClient:            khStateClient,
-		CheckName:                checkConfig.Name,
-		KuberhealthyReportingURL: reportingURL,
-		RunTimeout:               defaultTimeout,
-		ExtraAnnotations:         make(map[string]string),
-		ExtraLabels:              make(map[string]string),
-		OriginalPodSpec:          checkConfig.Spec.PodSpec,
-		PodSpec:                  checkConfig.Spec.PodSpec,
-		KubeClient:               client,
-		KHWorkload:               workload.KHCheck,
+		Namespace:                     checkConfig.Namespace,
+		KHCheckClient:                 khCheckClient,
+		KHStateClient:                 khStateClient,
+		CheckName:                     checkConfig.Name,
+		KuberhealthyCheckReportingURL: reportingURL,
+		RunTimeout:                    defaultTimeout,
+		ExtraAnnotations:              make(map[string]string),
+		ExtraLabels:                   make(map[string]string),
+		OriginalPodSpec:               checkConfig.Spec.PodSpec,
+		PodSpec:                       checkConfig.Spec.PodSpec,
+		KubeClient:                    client,
+		KHWorkload:                    workload.KHCheck,
 	}
 }
 
@@ -157,17 +162,17 @@ func NewJob(client *kubernetes.Clientset, jobConfig *khjobv1.KuberhealthyJob, kh
 	// build the checker object
 	log.Debugf("Creating kuberhealthy job from job config: %+v \n", jobConfig)
 	return &Checker{
-		Namespace:                jobConfig.Namespace,
-		KHJobClient:              khJobClient,
-		KHStateClient:            khStateClient,
-		CheckName:                jobConfig.Name,
-		KuberhealthyReportingURL: reportingURL,
-		ExtraAnnotations:         make(map[string]string),
-		ExtraLabels:              make(map[string]string),
-		OriginalPodSpec:          jobConfig.Spec.PodSpec,
-		PodSpec:                  jobConfig.Spec.PodSpec,
-		KubeClient:               client,
-		KHWorkload:               workload.KHJob,
+		Namespace:                   jobConfig.Namespace,
+		KHJobClient:                 khJobClient,
+		KHStateClient:               khStateClient,
+		CheckName:                   jobConfig.Name,
+		KuberhealthyJobReportingURL: reportingURL,
+		ExtraAnnotations:            make(map[string]string),
+		ExtraLabels:                 make(map[string]string),
+		OriginalPodSpec:             jobConfig.Spec.PodSpec,
+		PodSpec:                     jobConfig.Spec.PodSpec,
+		KubeClient:                  client,
+		KHWorkload:                  workload.KHJob,
 	}
 }
 
@@ -577,7 +582,7 @@ func (ext *Checker) RunOnce(ctx context.Context) error {
 
 	// condition the spec with the required labels and environment variables
 	ext.log("Configuring spec of external check")
-	err = ext.configureUserPodSpec(deadline)
+	err = ext.configureUserPodSpec(deadline, ext.KHWorkload)
 	if err != nil {
 		return ext.newError("failed to configure pod spec for Kubernetes from user specified pod spec: " + err.Error())
 	}
@@ -1113,7 +1118,17 @@ func (ext *Checker) createPod(ctx context.Context) (*apiv1.Pod, error) {
 // the unique and required fields for compatibility with an external
 // kuberhealthy check.  Required environment variables and settings
 // overwrite user-specified values.
-func (ext *Checker) configureUserPodSpec(deadline time.Time) error {
+func (ext *Checker) configureUserPodSpec(deadline time.Time, workloadType workload.KHWorkload) error {
+
+	// by default, we give the pod a status reporting URL to report check results to of
+	// the khcheck endpoint.  However, if this is a simple KHJob one time use check, we
+	// tell the container to check into the khjob endpoint.  Having two endpoints
+	// prevents a check naming collision between a khcheck and a khjob and also makes it
+	// obvious to the main kuberhealthy pod what kind of workload is reporting status.
+	reportingURL := ext.KuberhealthyCheckReportingURL
+	if workloadType == workload.KHJob {
+		reportingURL = ext.KuberhealthyJobReportingURL
+	}
 
 	// start with a fresh spec each time we regenerate the spec
 	ext.PodSpec = ext.OriginalPodSpec
@@ -1124,7 +1139,7 @@ func (ext *Checker) configureUserPodSpec(deadline time.Time) error {
 	overwriteEnvVars := []apiv1.EnvVar{
 		{
 			Name:  KHReportingURL,
-			Value: ext.KuberhealthyReportingURL,
+			Value: reportingURL,
 		},
 		{
 			Name:  KHRunUUID,

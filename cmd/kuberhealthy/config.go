@@ -22,6 +22,7 @@ type Config struct {
 	InfluxDB                  string        `yaml:"influxDB,omitempty"`
 	EnableInflux              bool          `yaml:"enableInflux,omitempty"`
 	ExternalCheckReportingURL string        `yaml:"externalCheckReportingURL,omitempty"`
+	ExternalJobReportingURL   string        `yaml:"externalJobReportingURL,omitempty"`
 	MaxKHJobAge               time.Duration `yaml:"maxKHJobAge,omitempty"`
 	MaxCheckPodAge            time.Duration `yaml:"maxCheckPodAge,omitempty"`
 	MaxCompletedPodCount      int           `yaml:"maxCompletedPodCount,omitempty"`

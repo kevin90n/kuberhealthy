@@ -59,7 +59,7 @@ func newTestChecker(client *kubernetes.Clientset) (*Checker, error) {
 	if err != nil {
 		return &Checker{}, errors.New("Unable to load kubernetes pod spec " + podCheckFile + " " + err.Error())
 	}
-	chk := newTestCheckFromSpec(client, p, DefaultKuberhealthyReportingURL)
+	chk := newTestCheckFromSpec(client, p, DefaultKuberhealthyCheckReportingURL)
 	return chk, err
 }
 

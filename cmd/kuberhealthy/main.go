@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -41,8 +40,8 @@ var terminationGracePeriod = time.Minute * 5 // keep calibrated with kubernetes 
 // the hostname of this pod
 var podHostname string
 
-// KHExternalReportingURL is the environment variable key used to override the URL checks will be asked to report in to
-const KHExternalReportingURL = "KH_EXTERNAL_REPORTING_URL"
+// KHExternalReportingURLEnvKey is the environment variable key used to override the URL checks will be asked to report in to
+const KHExternalReportingURLEnvKey = "KH_EXTERNAL_REPORTING_URL"
 
 // DefaultRunInterval is the default run interval for checks set by kuberhealthy
 const DefaultRunInterval = time.Minute * 10
@@ -92,17 +91,27 @@ func setUpConfig() error {
 		log.Println("WARNING: Failed to read configuration file from disk:", err)
 	}
 
-	// set env variables into config if specified. otherwise set external check URL to default
-	externalCheckURL, err := getEnvVar(KHExternalReportingURL)
-	if err != nil {
-		if len(podNamespace) == 0 {
-			return errors.New("KH_EXTERNAL_REPORTING_URL environment variable not set and POD_NAMESPACE environment variable was blank.  Could not determine Kuberhealthy callback URL")
-		}
-		log.Infoln("KH_EXTERNAL_REPORTING_URL environment variable not set, using default value")
-		externalCheckURL = "http://kuberhealthy." + podNamespace + ".svc.cluster.local/externalCheckStatus"
+	if len(podNamespace) == 0 {
+		log.Warningln("POD_NAMESPACE environment variable not found.  Defaulting to 'kuberhealthy'.")
+		podNamespace = "kuberhealthy"
 	}
-	cfg.ExternalCheckReportingURL = externalCheckURL
+
+	// determine and set external check status URL
+	cfg.ExternalCheckReportingURL = "http://kuberhealthy." + podNamespace + ".svc.cluster.local/externalCheckStatus"
+	externalReportingURL, err := getEnvVar(KHExternalReportingURLEnvKey)
+	if err != nil {
+		cfg.ExternalCheckReportingURL = "http://" + externalReportingURL + "/externalCheckStatus"
+	}
 	log.Infoln("External check reporting URL set to:", cfg.ExternalCheckReportingURL)
+
+	// determine and set external job status URL
+	cfg.ExternalJobReportingURL = "http://kuberhealthy." + podNamespace + ".svc.cluster.local/externalJobStatus"
+	externalReportingURL, err = getEnvVar(KHExternalReportingURLEnvKey)
+	if err != nil {
+		cfg.ExternalCheckReportingURL = "http://" + externalReportingURL + "/externalJobStatus"
+	}
+	log.Infoln("External job reporting URL set to:", cfg.ExternalJobReportingURL)
+
 	return nil
 }
 
