@@ -12,6 +12,7 @@ import (
 
 	khcheckv1 "github.com/kuberhealthy/kuberhealthy/v2/pkg/apis/khcheck/v1"
 	khstatev1 "github.com/kuberhealthy/kuberhealthy/v2/pkg/apis/khstate/v1"
+	"github.com/kuberhealthy/kuberhealthy/v2/pkg/apis/khstate/v1/reflector"
 	"github.com/kuberhealthy/kuberhealthy/v2/pkg/kubeClient"
 
 	apiv1 "k8s.io/api/core/v1"
@@ -59,7 +60,8 @@ func newTestChecker(client *kubernetes.Clientset) (*Checker, error) {
 	if err != nil {
 		return &Checker{}, errors.New("Unable to load kubernetes pod spec " + podCheckFile + " " + err.Error())
 	}
-	chk := newTestCheckFromSpec(client, p, DefaultKuberhealthyCheckReportingURL)
+	testStateReflector := reflector.NewStateReflector(khStateClient, "khstates", "") // blank for all namespaces
+	chk := newTestCheckFromSpec(client, p, testStateReflector, DefaultKuberhealthyCheckReportingURL)
 	return chk, err
 }
 
@@ -82,9 +84,9 @@ func TestExternalChecker(t *testing.T) {
 
 // newTestCheckFromSpec creates a new test checker but using the supplied
 // spec file for a khcheck
-func newTestCheckFromSpec(client *kubernetes.Clientset, checkSpec *khcheckv1.KuberhealthyCheck, reportingURL string) *Checker {
+func newTestCheckFromSpec(client *kubernetes.Clientset, checkSpec *khcheckv1.KuberhealthyCheck, stateReflector *reflector.StateReflector, reportingURL string) *Checker {
 	// create a new checker and insert this pod spec
-	checker := New(client, checkSpec, khCheckClient, khStateClient, reportingURL) // external checker does not ever return an error so we drop it
+	checker := New(client, checkSpec, khCheckClient, stateReflector, khStateClient, reportingURL) // external checker does not ever return an error so we drop it
 	checker.Debug = true
 	return checker
 }

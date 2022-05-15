@@ -653,7 +653,7 @@ func (k *Kuberhealthy) addExternalChecks(ctx context.Context) error {
 
 		// create a new kubernetes client for this external checker
 		log.Infoln("Enabling external check:", r.Name)
-		c := external.New(kubernetesClient, &r, khCheckClient, khStateClient, cfg.ExternalCheckReportingURL)
+		c := external.New(kubernetesClient, &r, khCheckClient, k.stateReflector, khStateClient, cfg.ExternalCheckReportingURL)
 
 		// parse the run interval string from the custom resource and setup the run interval
 		c.RunInterval, err = time.ParseDuration(r.Spec.RunInterval)
@@ -702,7 +702,7 @@ func (k *Kuberhealthy) configureJob(job khjobv1.KuberhealthyJob) *external.Check
 
 	// create a new kubernetes client for this external checker
 	log.Infoln("Enabling external job:", job.Name)
-	kj := external.NewJob(kubernetesClient, &job, khJobClient, khStateClient, cfg.ExternalJobReportingURL)
+	kj := external.NewJob(kubernetesClient, &job, khJobClient, k.stateReflector, cfg.ExternalJobReportingURL)
 
 	var err error
 	// parse the user specified timeout if present

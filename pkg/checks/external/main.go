@@ -28,6 +28,7 @@ import (
 	khcheckv1 "github.com/kuberhealthy/kuberhealthy/v2/pkg/apis/khcheck/v1"
 	khjobv1 "github.com/kuberhealthy/kuberhealthy/v2/pkg/apis/khjob/v1"
 	khstatev1 "github.com/kuberhealthy/kuberhealthy/v2/pkg/apis/khstate/v1"
+	"github.com/kuberhealthy/kuberhealthy/v2/pkg/apis/khstate/v1/reflector"
 	"github.com/kuberhealthy/kuberhealthy/v2/pkg/checks/external/util"
 	"github.com/kuberhealthy/kuberhealthy/v2/pkg/workload"
 )
@@ -114,6 +115,7 @@ type Checker struct {
 	hostname                      string             // hostname cache
 	checkPodName                  string             // the current unique checker pod name
 	KHWorkload                    workload.KHWorkload
+	stateReflector                *reflector.StateReflector
 }
 
 func init() {
@@ -124,12 +126,11 @@ func init() {
 }
 
 // New creates a new external checker
-func New(client *kubernetes.Clientset, checkConfig *khcheckv1.KuberhealthyCheck, khCheckClient *khcheckv1.KHCheckV1Client, khStateClient *khstatev1.KHStateV1Client, reportingURL string) *Checker {
-
-	return NewCheck(client, checkConfig, khCheckClient, khStateClient, reportingURL)
+func New(client *kubernetes.Clientset, checkConfig *khcheckv1.KuberhealthyCheck, khCheckClient *khcheckv1.KHCheckV1Client, stateReflector *reflector.StateReflector, khstateClient *khstatev1.KHStateV1Client, reportingURL string) *Checker {
+	return NewCheck(client, checkConfig, khCheckClient, stateReflector, reportingURL)
 }
 
-func NewCheck(client *kubernetes.Clientset, checkConfig *khcheckv1.KuberhealthyCheck, khCheckClient *khcheckv1.KHCheckV1Client, khStateClient *khstatev1.KHStateV1Client, reportingURL string) *Checker {
+func NewCheck(client *kubernetes.Clientset, checkConfig *khcheckv1.KuberhealthyCheck, khCheckClient *khcheckv1.KHCheckV1Client, stateReflector *reflector.StateReflector, reportingURL string) *Checker {
 
 	if len(checkConfig.Namespace) == 0 {
 		checkConfig.Namespace = "kuberhealthy"
@@ -140,7 +141,7 @@ func NewCheck(client *kubernetes.Clientset, checkConfig *khcheckv1.KuberhealthyC
 	return &Checker{
 		Namespace:                     checkConfig.Namespace,
 		KHCheckClient:                 khCheckClient,
-		KHStateClient:                 khStateClient,
+		stateReflector:                stateReflector,
 		CheckName:                     checkConfig.Name,
 		KuberhealthyCheckReportingURL: reportingURL,
 		RunTimeout:                    defaultTimeout,
@@ -153,7 +154,7 @@ func NewCheck(client *kubernetes.Clientset, checkConfig *khcheckv1.KuberhealthyC
 	}
 }
 
-func NewJob(client *kubernetes.Clientset, jobConfig *khjobv1.KuberhealthyJob, khJobClient *khjobv1.KHJobV1Client, khStateClient *khstatev1.KHStateV1Client, reportingURL string) *Checker {
+func NewJob(client *kubernetes.Clientset, jobConfig *khjobv1.KuberhealthyJob, khJobClient *khjobv1.KHJobV1Client, stateReflector *reflector.StateReflector, reportingURL string) *Checker {
 
 	if len(jobConfig.Namespace) == 0 {
 		jobConfig.Namespace = "kuberhealthy"
@@ -164,7 +165,7 @@ func NewJob(client *kubernetes.Clientset, jobConfig *khjobv1.KuberhealthyJob, kh
 	return &Checker{
 		Namespace:                   jobConfig.Namespace,
 		KHJobClient:                 khJobClient,
-		KHStateClient:               khStateClient,
+		stateReflector:              stateReflector,
 		CheckName:                   jobConfig.Name,
 		KuberhealthyJobReportingURL: reportingURL,
 		ExtraAnnotations:            make(map[string]string),
@@ -753,7 +754,18 @@ func (ext *Checker) sanityCheck() error {
 // getKHState gets the khstate for this check from the resource in the API server
 func (ext *Checker) getKHState() (khstatev1.KuberhealthyState, error) {
 	// fetch the khstate as it exists
-	return ext.KHStateClient.KuberhealthyStates(ext.Namespace).Get(ext.CheckName, metav1.GetOptions{})
+	khStateName := ext.Namespace + "/" + ext.checkPodName
+
+	switch ext.KHWorkload {
+	case workload.KHCheck:
+		workloadDetails := ext.stateReflector.CurrentStatus().CheckDetails[khStateName]
+		return khstatev1.NewKuberhealthyState(khStateName, workloadDetails), nil
+	case workload.KHJob:
+		workloadDetails := ext.stateReflector.CurrentStatus().CheckDetails[khStateName]
+		return khstatev1.NewKuberhealthyState(khStateName, workloadDetails), nil
+	default:
+		return khstatev1.KuberhealthyState{}, errors.New("unable to find khstate workload of type " + ext.KHWorkload.String() + " and name " + khStateName)
+	}
 }
 
 // getCheckLastUpdateTime fetches the last time the khstate custom resource for this check was updated
