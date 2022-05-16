@@ -345,7 +345,7 @@ func (ext *Checker) evictPod(ctx context.Context, podName string, podNamespace s
 	if err != nil {
 		ext.log("error when trying to cleanup/evict checker pod", podName, "in namespace", podNamespace+":", err)
 		podExists, _ := util.PodNameExists(ext.KubeClient, podName, podNamespace)
-		if podExists == true {
+		if podExists {
 			err := util.PodKill(ext.KubeClient, podName, podNamespace, 30)
 			if err != nil {
 				ext.log("error killing pod", podName+":", err)
@@ -753,19 +753,7 @@ func (ext *Checker) sanityCheck() error {
 
 // getKHState gets the khstate for this check from the resource in the API server
 func (ext *Checker) getKHState() (khstatev1.KuberhealthyState, error) {
-	// fetch the khstate as it exists
-	khStateName := ext.Namespace + "/" + ext.checkPodName
-
-	switch ext.KHWorkload {
-	case workload.KHCheck:
-		workloadDetails := ext.stateReflector.CurrentStatus().CheckDetails[khStateName]
-		return khstatev1.NewKuberhealthyState(khStateName, workloadDetails), nil
-	case workload.KHJob:
-		workloadDetails := ext.stateReflector.CurrentStatus().CheckDetails[khStateName]
-		return khstatev1.NewKuberhealthyState(khStateName, workloadDetails), nil
-	default:
-		return khstatev1.KuberhealthyState{}, errors.New("unable to find khstate workload of type " + ext.KHWorkload.String() + " and name " + khStateName)
-	}
+	return ext.stateReflector.GetState(ext.Name(), ext.Namespace)
 }
 
 // getCheckLastUpdateTime fetches the last time the khstate custom resource for this check was updated
@@ -863,9 +851,9 @@ func (ext *Checker) waitForAllPodsToClear(ctx context.Context) chan error {
 	// setup a pod watching client for our current KH pod
 	podClient := ext.KubeClient.CoreV1().Pods(ext.Namespace)
 
+	ext.wg.Add(1)
 	go func() {
 
-		ext.wg.Add(1)
 		defer ext.wg.Done()
 
 		// watch events and return when the pod is in state running
@@ -916,9 +904,9 @@ func (ext *Checker) waitForPodExit(ctx context.Context) chan error {
 	// setup a pod watching client for our current KH pod
 	podClient := ext.KubeClient.CoreV1().Pods(ext.Namespace)
 
+	ext.wg.Add(1)
 	go func() {
 
-		ext.wg.Add(1)
 		defer ext.wg.Done()
 
 		for {
@@ -985,9 +973,9 @@ func (ext *Checker) waitForPodStart(ctx context.Context) chan error {
 	// setup a pod watching client for our current KH pod
 	podClient := ext.KubeClient.CoreV1().Pods(ext.Namespace)
 
+	ext.wg.Add(1)
 	go func() {
 
-		ext.wg.Add(1)
 		defer ext.wg.Done()
 
 		// watch over and over again until we see our event or run out of time

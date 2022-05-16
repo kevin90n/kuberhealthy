@@ -1,6 +1,7 @@
 package reflector
 
 import (
+	"errors"
 	"strings"
 	"time"
 
@@ -50,6 +51,26 @@ func (sr *StateReflector) Stop() {
 func (sr *StateReflector) Start() {
 	log.Infoln("khState reflector starting")
 	sr.reflector.Run(sr.reflectorSigChan)
+}
+
+// GetState fetches a single `khstate` resource from the khstate reflector cache.
+func (sr *StateReflector) GetState(name string, namespace string) (khstatev1.KuberhealthyState, error) {
+	khStateList := sr.store.List()
+	for i, khStateUndefined := range khStateList {
+		log.Debugln("state reflector store item from listing:", i, khStateUndefined)
+		khState, ok := khStateUndefined.(*khstatev1.KuberhealthyState)
+		if !ok {
+			log.Warningln("attempted to convert item from state cache reflector to a khstatev1.KuberhealthyState, but the type was invalid")
+			continue
+		}
+
+		// see if the khstate entry we're looking at is the one we want to return
+		if strings.EqualFold(khState.Name, name) && strings.EqualFold(khState.Namespace, namespace) {
+			return *khState, nil
+		}
+	}
+
+	return khstatev1.KuberhealthyState{}, errors.New("unable to find khstate in state reflector cache with name " + name + " in namespace " + namespace)
 }
 
 // CurrentStatus returns the current summary of checks as known by the cache.

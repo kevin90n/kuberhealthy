@@ -107,7 +107,7 @@ func TestShutdown(t *testing.T) {
 
 	// tell the checker to shut down in the background
 	t.Log("Sending shutdown to check")
-	c := make(chan error, 0)
+	c := make(chan error)
 	go func(c chan error) {
 		c <- checker.Shutdown()
 	}(c)

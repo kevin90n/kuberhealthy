@@ -4,6 +4,8 @@ TAG="unstable"
 build:
 	docker build --no-cache --pull -t ${IMAGE}:${TAG} -f Dockerfile ../../
 build-dev:
+	docker build --platform linux/amd64 -t kuberhealthy:dev -f Dockerfile ../../
+build-dev-m1:
 	docker build -t kuberhealthy:dev -f Dockerfile ../../
 push:
 	docker push ${IMAGE}:${TAG}
