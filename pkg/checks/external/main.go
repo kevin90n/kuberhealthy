@@ -126,11 +126,11 @@ func init() {
 }
 
 // New creates a new external checker
-func New(client *kubernetes.Clientset, checkConfig *khcheckv1.KuberhealthyCheck, khCheckClient *khcheckv1.KHCheckV1Client, stateReflector *reflector.StateReflector, khstateClient *khstatev1.KHStateV1Client, reportingURL string) *Checker {
-	return NewCheck(client, checkConfig, khCheckClient, stateReflector, reportingURL)
+func New(client *kubernetes.Clientset, checkConfig *khcheckv1.KuberhealthyCheck, khCheckClient *khcheckv1.KHCheckV1Client, stateReflector *reflector.StateReflector, khStateClient *khstatev1.KHStateV1Client, reportingURL string) *Checker {
+	return NewCheck(client, checkConfig, khCheckClient, khStateClient, stateReflector, reportingURL)
 }
 
-func NewCheck(client *kubernetes.Clientset, checkConfig *khcheckv1.KuberhealthyCheck, khCheckClient *khcheckv1.KHCheckV1Client, stateReflector *reflector.StateReflector, reportingURL string) *Checker {
+func NewCheck(client *kubernetes.Clientset, checkConfig *khcheckv1.KuberhealthyCheck, khCheckClient *khcheckv1.KHCheckV1Client, khStateClient *khstatev1.KHStateV1Client, stateReflector *reflector.StateReflector, reportingURL string) *Checker {
 
 	if len(checkConfig.Namespace) == 0 {
 		checkConfig.Namespace = "kuberhealthy"
@@ -151,10 +151,11 @@ func NewCheck(client *kubernetes.Clientset, checkConfig *khcheckv1.KuberhealthyC
 		PodSpec:                       checkConfig.Spec.PodSpec,
 		KubeClient:                    client,
 		KHWorkload:                    workload.KHCheck,
+		KHStateClient:                 khStateClient,
 	}
 }
 
-func NewJob(client *kubernetes.Clientset, jobConfig *khjobv1.KuberhealthyJob, khJobClient *khjobv1.KHJobV1Client, stateReflector *reflector.StateReflector, reportingURL string) *Checker {
+func NewJob(client *kubernetes.Clientset, jobConfig *khjobv1.KuberhealthyJob, khJobClient *khjobv1.KHJobV1Client, khStateClient *khstatev1.KHStateV1Client, stateReflector *reflector.StateReflector, reportingURL string) *Checker {
 
 	if len(jobConfig.Namespace) == 0 {
 		jobConfig.Namespace = "kuberhealthy"
@@ -174,6 +175,7 @@ func NewJob(client *kubernetes.Clientset, jobConfig *khjobv1.KuberhealthyJob, kh
 		PodSpec:                     jobConfig.Spec.PodSpec,
 		KubeClient:                  client,
 		KHWorkload:                  workload.KHJob,
+		KHStateClient:               khStateClient,
 	}
 }
 
@@ -366,6 +368,15 @@ func (ext *Checker) setUUID(uuid string) error {
 		return fmt.Errorf("error setting uuid for check %s %w", ext.CheckName, err)
 	}
 
+	// create a khState client
+	if ext.KHStateClient == nil {
+		return fmt.Errorf("error: external checker %s has a nil khstateclient for", ext.CheckName)
+	}
+	khStateClient := ext.KHStateClient.KuberhealthyStates(ext.CheckNamespace())
+	if khStateClient == nil {
+		return fmt.Errorf("error: khstateClient as fetched for %s/%s, but it was nil", ext.Namespace, ext.Name())
+	}
+
 	// if the check was not found, we create a fresh one and start there
 	if err != nil && (k8sErrors.IsNotFound(err) || strings.Contains(err.Error(), "not found")) {
 		ext.log("khstate did not exist, so a default object will be created")
@@ -377,50 +388,56 @@ func (ext *Checker) setUUID(uuid string) error {
 		newState := khstatev1.NewKuberhealthyState(ext.CheckName, details)
 		newState.Namespace = ext.Namespace
 		ext.log("Creating khstate", newState.Name, newState.Namespace, "because it did not exist")
-		_, err = ext.KHStateClient.KuberhealthyStates(ext.CheckNamespace()).Create(&newState)
+
+		// create a fresh khState
+		_, err = khStateClient.Create(&newState)
 		if err != nil {
 			ext.log("failed to create a khstate after finding that it did not exist:", err)
 			return err
 		}
 
-		// checkState will be the new check we just created
-		checkState, err = ext.getKHState()
+		// checkState will be the new check we just created.  For this, we use a real client because
+		// the reflector cache may not be fast enough to contain the new resource we just created.
+		checkState, err = khStateClient.Get(ext.Name(), metav1.GetOptions{})
 		if err != nil {
-			ext.log("failed to fetch khstate khstate after creating it because it did not exist:", err)
-			return err
+			return fmt.Errorf("error creating new khstate resource: %w", err)
 		}
 	}
 
-	// assign the new uuid
-	checkState.Spec.CurrentUUID = uuid
-
-	// update the resource with the new values we want
-	ext.log("Updating khstate", checkState.Name, checkState.Namespace, "to setUUID:", checkState.Spec.CurrentUUID)
-	_, err = ext.KHStateClient.KuberhealthyStates(ext.CheckNamespace()).Update(&checkState)
-
-	// Sometimes a race condition occurs when a pod has to verify uuid with kh server. If the pod happens to check the
-	// uuid before it shows as updated on kube-apiserver, the pod will not be allowed to report its status.
-	// This for-loop is to verify the pod uuid is properly set with the api server before the checker pod is started.
+	// update the khstate resource with the new uuid and retry if it fails
 	tries := 0
-	for {
-		if tries >= 9 {
-			return fmt.Errorf("failed to verify uuid match %s after %d tries", checkState.Spec.CurrentUUID, tries)
-		}
+	for tries <= 9 {
+		// assign the new uuid
+		checkState.Spec.CurrentUUID = uuid
+
+		// track how many times this has been tried
 		tries++
-		ext.log("Waiting 1 second before checking " + ext.Name() + " uuid.")
-		time.Sleep(time.Second * 1)
-		extCheck, err := ext.KHStateClient.KuberhealthyStates(ext.CheckNamespace()).Get(ext.Name(), metav1.GetOptions{})
-		if err != nil {
-			ext.log("failed to get khstate while truing up check uuid:", err)
-			continue
+
+		// update the khstate and if successful, break the loop
+		ext.log("Updating khstate", checkState.Name, checkState.Namespace, "to setUUID:", checkState.Spec.CurrentUUID)
+		_, err = khStateClient.Update(&checkState)
+		if err == nil {
+			break
 		}
-		if checkState.Spec.CurrentUUID == extCheck.Spec.CurrentUUID {
+
+		// wait between tries
+		ext.log("Waiting 500ms second before checking " + ext.Name() + " uuid.")
+		time.Sleep(time.Second / 2)
+
+		// if the update failed, fetch the most resent khstate resource from the server and try again
+		checkState, err = khStateClient.Get(ext.Name(), metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get most recent checkState for khstate %s/%s while retrying a uuid update", ext.Namespace, ext.Name())
+		}
+
+		// if the remote check happens to already have this UUID we want to set, call that good and stop trying
+		if checkState.Spec.CurrentUUID == uuid {
 			ext.log(ext.Name() + " verified uuid match.")
 			break
 		}
 	}
 
-	return err
+	return nil
 }
 
 // watchForCheckerPodShutdown watches for the pod running checks to be shut down.  This means that either the pod

@@ -702,7 +702,7 @@ func (k *Kuberhealthy) configureJob(job khjobv1.KuberhealthyJob) *external.Check
 
 	// create a new kubernetes client for this external checker
 	log.Infoln("Enabling external job:", job.Name)
-	kj := external.NewJob(kubernetesClient, &job, khJobClient, k.stateReflector, cfg.ExternalJobReportingURL)
+	kj := external.NewJob(kubernetesClient, &job, khJobClient, khStateClient, k.stateReflector, cfg.ExternalJobReportingURL)
 
 	var err error
 	// parse the user specified timeout if present
