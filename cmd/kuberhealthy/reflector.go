@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"time"
 
@@ -32,7 +33,7 @@ func NewStateReflector(namespace string) *StateReflector {
 	sr.resyncPeriod = time.Minute * 5
 
 	// structure the reflector and its required elements
-	khStateListWatch := cache.NewListWatchFromClient(khStateClient.RESTClient(), stateCRDResource, namespace, fields.Everything())
+	khStateListWatch := cache.NewListWatchFromClient(khStateClient, stateCRDResource, namespace, fields.Everything())
 	sr.store = cache.NewStore(cache.MetaNamespaceKeyFunc)
 	sr.reflector = cache.NewReflector(khStateListWatch, &khstatev1.KuberhealthyState{}, sr.store, sr.resyncPeriod)
 
@@ -54,7 +55,7 @@ func (sr *StateReflector) Start() {
 }
 
 // CurrentStatus returns the current summary of checks as known by the cache.
-func (sr *StateReflector) CurrentStatus() health.State {
+func (sr *StateReflector) CurrentStatus(ctx context.Context) health.State {
 	log.Infoln("khState reflector fetching current status")
 	state := health.NewState()
 
@@ -94,7 +95,7 @@ func (sr *StateReflector) CurrentStatus() health.State {
 			state.OK = false
 		}
 
-		khWorkload := determineKHWorkload(khState.Name, khState.Namespace)
+		khWorkload := determineKHWorkload(ctx, khState.Name, khState.Namespace)
 		switch khWorkload {
 		case khstatev1.KHCheck:
 			state.CheckDetails[khState.GetNamespace()+"/"+khState.GetName()] = khState.Spec
@@ -109,7 +110,7 @@ func (sr *StateReflector) CurrentStatus() health.State {
 
 // determineKHWorkload uses the name and namespace of the kuberhealthy resource to determine whether its a khjob or khcheck
 // This function is necessary for the CurrentStatus() function as getting the KHWorkload from the state spec returns a blank kh workload.
-func determineKHWorkload(name string, namespace string) khstatev1.KHWorkload {
+func determineKHWorkload(ctx context.Context, name string, namespace string) khstatev1.KHWorkload {
 
 	var khWorkload khstatev1.KHWorkload
 	log.Debugln("determineKHWorkload: determining workload:", name)
@@ -124,7 +125,7 @@ func determineKHWorkload(name string, namespace string) khstatev1.KHWorkload {
 		return khstatev1.KHCheck
 	}
 
-	_, err = khJobClient.KuberhealthyJobs(namespace).Get(name, v1.GetOptions{})
+	_, err = khJobClient.Namespace(namespace).Get(ctx, name, v1.GetOptions{})
 	if err != nil {
 		if k8sErrors.IsNotFound(err) || strings.Contains(err.Error(), "not found") {
 			log.Debugln("determineKHWorkload: Not a khjob.")

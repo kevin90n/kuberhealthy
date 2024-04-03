@@ -13,13 +13,11 @@ import (
 
 	"github.com/integrii/flaggy"
 	log "github.com/sirupsen/logrus"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
-	khcheckv1 "github.com/kuberhealthy/kuberhealthy/v2/pkg/apis/khcheck/v1"
-	khjobv1 "github.com/kuberhealthy/kuberhealthy/v2/pkg/apis/khjob/v1"
-	khstatev1 "github.com/kuberhealthy/kuberhealthy/v2/pkg/apis/khstate/v1"
 	"github.com/kuberhealthy/kuberhealthy/v2/pkg/kubeClient"
 	"github.com/kuberhealthy/kuberhealthy/v2/pkg/masterCalculation"
 )
@@ -52,14 +50,18 @@ var DefaultTimeout = time.Minute * 5
 // KHCheckNameAnnotationKey is the key used in the annotation that holds the check's short name
 const KHCheckNameAnnotationKey = "comcast.github.io/check-name"
 
-// khCheckClient is a client for khstate custom resources
-var khStateClient *khstatev1.KHStateV1Client
+// dynamicClient is a client that can be used to watch any type of custom resource
+var dnymaicClient *dynamic.DynamicClient
 
-// khStateClient is a client for khcheck custom resources
-var khCheckClient *khcheckv1.KHCheckV1Client
+// these group version resources are used to watch custom resources with a dynamicClient
+var khStateGVR = schema.GroupVersionResource{Group: "comcast.github.io", Version: "v1", Resource: "khstates"}
+var khCheckGVR = schema.GroupVersionResource{Group: "comcast.github.io", Version: "v1", Resource: "khchecks"}
+var khJobGVR = schema.GroupVersionResource{Group: "comcast.github.io", Version: "v1", Resource: "khjobs"}
 
-// khJobClient is a client for khjob custom resources
-var khJobClient *khjobv1.KHJobV1Client
+// setup CRD clients by adapting the dynamicClient
+var khStateClient = dynamicClient.Resource(khStateGVR)
+var khcheckClient = dynamicClient.Resource(khCheckGVR)
+var khJobClient = dynamicClient.Resource(khJobGVR)
 
 // constants for using the kuberhealthy status CRD
 // const stateCRDGroup = "comcast.github.io"
@@ -143,27 +145,6 @@ func initKubernetesClients() error {
 		return err
 	}
 	kubernetesClient = kc
-
-	// make a new crd check client
-	checkClient, err := khcheckv1.Client(cfg.kubeConfigFile)
-	if err != nil {
-		return err
-	}
-	khCheckClient = checkClient
-
-	// make a new crd state client
-	stateClient, err := khstatev1.Client(cfg.kubeConfigFile)
-	if err != nil {
-		return err
-	}
-	khStateClient = stateClient
-
-	// make a new crd job client
-	jobClient, err := khjobv1.Client(cfg.kubeConfigFile)
-	if err != nil {
-		return err
-	}
-	khJobClient = jobClient
 
 	// make a dynamicClient for kubernetes unstructured checks
 	restConfig, err := clientcmd.BuildConfigFromFlags(kc.RESTClient().Get().URL().Host, configPath)
